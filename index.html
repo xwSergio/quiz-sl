@@ -113,6 +113,40 @@ body.tv .board-head h3 { font-size: 30px; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 @keyframes pop { from { transform: scale(.96); opacity: .6; } to { transform: none; opacity: 1; } }
 .pop { animation: pop .25s ease-out; }
+.status-line { font: 700 18px var(--display); color: var(--sun); margin: 0; }
+.center { text-align: center; }
+h2.center { font: 800 28px var(--display); margin: 0; }
+.lobby { flex: 1; display: grid; place-content: center; justify-items: center; text-align: center; gap: 16px; padding-block: 24px; }
+.lobby h1 { font: 800 clamp(28px, 5vw, 44px)/1.05 var(--display); margin: 0; text-wrap: balance; }
+.pulse { width: 64px; height: 64px; border-radius: 50%; background: var(--sun); animation: pulse 1.6s ease-in-out infinite; }
+@keyframes pulse { 0%,100% { transform: scale(.85); box-shadow: 0 0 0 0 rgba(255,182,39,.45); } 50% { transform: scale(1); box-shadow: 0 0 0 22px rgba(255,182,39,0); } }
+.names { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; max-width: 720px; }
+.name-chip { background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 8px 14px; font-weight: 700; animation: pop .25s ease-out; }
+.name-chip.mine { background: var(--sun); color: #1a1200; border-color: var(--sun); }
+.names.big .name-chip { font-size: 20px; padding: 10px 18px; }
+.go { color: var(--sun); font-size: clamp(48px, 10vw, 96px) !important; animation: pop .4s ease-out; }
+.host-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.host-head h1 { margin: 0; font: 800 clamp(28px, 4vw, 40px) var(--display); }
+.host-lobby { display: grid; grid-template-columns: auto 1fr; gap: 24px; align-items: start; }
+.join-card { background: #fff; color: #0f1c2e; border-radius: 16px; padding: 16px; text-align: center; display: grid; gap: 8px; justify-items: center; }
+.join-card img { display: block; width: 240px; height: 240px; image-rendering: pixelated; }
+.join-url { font: 800 15px var(--display); word-break: break-all; max-width: 240px; }
+.lobby-side { display: grid; gap: 16px; align-content: start; }
+.lobby-side .names { justify-content: flex-start; max-width: none; }
+.count { font: 700 20px var(--display); color: var(--muted); }
+.count b { font-size: 56px; color: var(--sun); margin-right: 6px; font-variant-numeric: tabular-nums; }
+.btn.danger { background: var(--bad); color: #fff; box-shadow: 0 5px 0 #8f1f23; }
+.btn:disabled { opacity: .6; cursor: default; }
+.pod { display: flex; justify-content: center; align-items: flex-end; gap: 12px; margin: 8px 0; }
+.pod-col { display: grid; justify-items: center; gap: 6px; width: min(30%, 180px); text-align: center; }
+.pod-name { font: 800 18px var(--display); word-break: break-word; }
+.pod-pts { color: var(--muted); font-weight: 700; font-variant-numeric: tabular-nums; }
+.pod-bar { width: 100%; border-radius: 12px 12px 0 0; display: grid; place-items: center; font: 800 28px var(--display); color: #1a1200; }
+.pod-col.p1 .pod-bar { height: 140px; background: var(--sun); }
+.pod-col.p2 .pod-bar { height: 100px; background: #c9d4e3; }
+.pod-col.p3 .pod-bar { height: 72px; background: #d08a4e; }
+@media (max-width: 560px) { table.rank th:nth-child(4), table.rank td:nth-child(4) { display: none; } table.rank th, table.rank td { padding: 10px 8px; } table.rank td.pos { width: 36px; } }
+@media (max-width: 700px) { .host-lobby { grid-template-columns: 1fr; justify-items: center; } .lobby-side .names { justify-content: center; } }
 </style>
 </head>
 <body>
@@ -152,133 +186,155 @@ const $ = (s, r = document) => r.querySelector(s);
 const esc = t => String(t).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const fmt = n => Number(n || 0).toLocaleString("es-ES");
 const screen = $("#screen");
-let state;
-let playerName = "";
-
-/* ---------- Clasificación compartida (Google Sheets) ---------- */
-// Pega aquí la URL de la aplicación web de Apps Script (termina en /exec)
 const API = "https://script.google.com/macros/s/AKfycbzHxyamfk4EZAmpag1muBAljUzKb0Caskcb8UxKFn7lEX9H63HTz-07deT-vQA8CwJt/exec";
-const live = { rows: [], status: API ? "loading" : "off" };
-const boardViews = new Set();
+const SITE = location.origin + location.pathname;
+const MODE = /[?&]profe\b/.test(location.search) ? "host" : /[?&]tabla\b/.test(location.search) ? "tv" : "player";
 
-let myId = "";
-try { myId = localStorage.getItem("quiz-sl-id") || ""; } catch (e) {}
-if (!myId) { myId = Math.random().toString(36).slice(2, 10) + Date.now().toString(36); try { localStorage.setItem("quiz-sl-id", myId); } catch (e) {} }
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+};
 
-function bestByName(list) {
-  return list.filter(r => String(r.name || "").trim())
-    .map(r => ({ id: String(r.id || r.name), name: String(r.name).trim(), score: Number(r.score) || 0, hits: Number(r.hits) || 0, q: Number(r.q) || 0 }))
-    .sort((x, y) => y.score - x.score || y.hits - x.hits || x.name.localeCompare(y.name));
+/* ---------------- Servidor ---------------- */
+const S = { ok: false, err: false, phase: null, game: 0, players: [] };
+let state = null;           // partida en curso de este jugador
+let view = "";              // pantalla actual
+let me = store.get("quiz-sl-me", null);
+if (!me || !me.id) { me = { id: Math.random().toString(36).slice(2, 10) + Date.now().toString(36), name: "", game: 0, done: false }; }
+const saveMe = () => store.set("quiz-sl-me", me);
+saveMe();
+
+function rank(list) {
+  return (list || []).map(r => ({ id: String(r.id), name: String(r.name), score: Number(r.score) || 0, hits: Number(r.hits) || 0, q: Number(r.q) || 0 }))
+    .sort((a, b) => b.score - a.score || b.hits - a.hits || a.name.localeCompare(b.name));
+}
+async function post(body) {
+  const r = await fetch(API, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(body) });
+  return r.json();
+}
+let polling = false;
+async function poll() {
+  if (polling) return;
+  polling = true;
+  try {
+    const r = await fetch(API + "?t=" + Date.now());
+    const d = await r.json();
+    S.phase = d.phase; S.game = Number(d.game); S.players = rank(d.players); S.ok = true; S.err = false;
+  } catch (e) { S.err = true; }
+  polling = false;
+  onState();
+}
+function schedule() {
+  const fast = MODE === "host" || view === "lobby" || view === "join" || view === "done" || MODE === "tv";
+  setTimeout(async () => { if (!document.hidden) await poll(); schedule(); }, fast ? 2000 : 5000);
+}
+
+/* ---------------- Tabla ---------------- */
+function boardHTML(opts = {}) {
+  const rows = S.players;
+  let body;
+  if (!S.ok) body = `<div class="empty">${S.err ? "No se pudo conectar. Reintentando…" : "Cargando…"}</div>`;
+  else if (!rows.length) body = `<div class="empty">Todavía no hay jugadores.</div>`;
+  else body = `<div class="board-wrap"><table class="rank">
+    <thead><tr><th>#</th><th>Nombre</th><th class="num">Progreso</th><th class="num">Aciertos</th><th class="num">Puntos</th></tr></thead>
+    <tbody>${rows.map((r, i) => `<tr class="${i < 3 ? "p" + (i + 1) : ""} ${MODE === "player" && r.id === me.id ? "me" : ""}">
+      <td class="pos">${i + 1}</td><td>${esc(r.name)}${MODE === "player" && r.id === me.id ? " (tú)" : ""}</td>
+      <td class="num prog">${r.q >= 10 ? "Terminado" : r.q + "/10"}</td>
+      <td class="num">${r.hits}</td><td class="num pts">${fmt(r.score)}</td></tr>`).join("")}</tbody></table></div>`;
+  const playing = rows.filter(r => r.q < 10).length;
+  const note = S.ok ? `${rows.length} jugador${rows.length === 1 ? "" : "es"}${S.phase === "playing" && playing ? " · " + playing + " jugando" : ""} · en directo` : "";
+  return `<div class="board"><div class="board-head"><h3>${opts.title || "Clasificación"}</h3><span class="hint">${note}</span></div>${body}</div>`;
+}
+function podiumHTML() {
+  const top = S.players.slice(0, 3);
+  if (!top.length) return "";
+  const order = [1, 0, 2].filter(i => top[i]);
+  return `<div class="pod">${order.map(i => `<div class="pod-col p${i + 1}"><div class="pod-name">${esc(top[i].name)}</div><div class="pod-pts">${fmt(top[i].score)}</div><div class="pod-bar">${i + 1}º</div></div>`).join("")}</div>`;
 }
 function myRank() {
-  const i = live.rows.findIndex(r => r.id === myId);
-  return i < 0 ? null : { pos: i + 1, total: live.rows.length };
+  const i = S.players.findIndex(r => r.id === me.id);
+  return i < 0 ? null : { pos: i + 1, total: S.players.length };
 }
-function sendProgress(final) {
-  if (!state) return Promise.resolve("off");
-  return saveScore({ id: myId, name: playerName, score: state.score, hits: state.log.filter(l => l.ok).length, q: state.log.length, final: !!final });
-}
-async function refresh() {
-  if (!API) { renderBoards(); return; }
-  try {
-    const r = await fetch(API + (API.includes("?") ? "&" : "?") + "t=" + Date.now());
-    const data = await r.json();
-    live.rows = bestByName(Array.isArray(data) ? data : (data.rows || []));
-    live.status = "ok";
-  } catch (e) { if (live.status !== "ok") live.status = "error"; }
-  renderBoards();
-}
-refresh();
-setInterval(() => { if (boardViews.size && !document.hidden) refresh(); }, 5000);
 
-async function saveScore(rec) {
-  if (!API) return "off";
-  const i = live.rows.findIndex(r => r.id === rec.id);
-  if (i >= 0) { const prev = live.rows[i]; if (!(prev.q >= 10 && prev.score > rec.score)) Object.assign(prev, { name: rec.name, score: rec.score, hits: rec.hits, q: rec.q }); }
-  else live.rows.push({ id: rec.id, name: rec.name, score: rec.score, hits: rec.hits, q: rec.q });
-  live.rows = bestByName(live.rows); renderBoards();
-  try {
-    // text/plain evita la comprobación CORS previa de Google
-    await fetch(API, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(rec) });
-    await refresh();
-    return "saved";
-  } catch (e) {
-    try { await fetch(API, { method: "POST", mode: "no-cors", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(rec) }); setTimeout(refresh, 1500); return "saved"; }
-    catch (e2) { return "error"; }
-  }
-}
-function boardHTML() {
-  let body;
-  if (live.status === "off") body = `<div class="empty">La tabla compartida todavía no está configurada.</div>`;
-  else if (live.status === "loading") body = `<div class="empty">Cargando clasificación…</div>`;
-  else if (live.status === "error") body = `<div class="empty">No se pudo cargar la tabla. Revisa la conexión y recarga.</div>`;
-  else if (!live.rows.length) body = `<div class="empty">Todavía no hay puntuaciones. Aparecerán aquí en cuanto alguien termine el quiz.</div>`;
-  else body = `<div class="board-wrap"><table class="rank">
-      <thead><tr><th>#</th><th>Nombre</th><th class="num">Progreso</th><th class="num">Aciertos</th><th class="num">Puntos</th></tr></thead>
-      <tbody>${live.rows.map((r, i) => `<tr class="${i < 3 ? "p" + (i + 1) : ""} ${r.id === myId && playerName ? "me" : ""}">
-        <td class="pos">${i + 1}</td><td>${esc(r.name)}${r.id === myId && playerName ? " (tú)" : ""}</td>
-        <td class="num prog">${r.q >= 10 ? "Terminado" : r.q + "/10"}</td>
-        <td class="num">${r.hits}</td><td class="num pts">${fmt(r.score)}</td></tr>`).join("")}</tbody></table></div>`;
-  const playing = live.rows.filter(r => r.q < 10).length;
-  const note = live.status === "ok" ? `${live.rows.length} jugador${live.rows.length === 1 ? "" : "es"}${playing ? " · " + playing + " jugando ahora" : ""} · en directo` : "";
-  return `<div class="board"><div class="board-head"><h3>Tabla de puntos</h3><span class="hint">${note}</span></div>${body}</div>`;
-}
-function renderBoards() {
-  boardViews.forEach(el => { if (!el.isConnected) { boardViews.delete(el); return; } el.innerHTML = boardHTML(); });
-}
-function mountBoard(el) { boardViews.add(el); el.innerHTML = boardHTML(); refresh(); }
-
-/* ---------- Juego ---------- */
-function reset() {
-  state = { i: 0, score: 0, streak: 0, best: 0, log: [], timer: null, locked: false };
-  $("#score").textContent = 0; $("#streak").textContent = 0;
-}
-function intro() {
-  reset();
+/* ---------------- Jugador ---------------- */
+function showJoin(msg) {
+  view = "join";
   $("#whochip").hidden = true;
+  const closed = S.ok && S.phase === "finished";
   screen.innerHTML = `
     <section class="intro pop">
       <h1>¿Qué sociedad para <em>seis socios</em> y 6.000 €?</h1>
-      <p>Diez preguntas sobre el audio: seis personas crean una empresa de instalación de placas solares y comparan la sociedad limitada con la sociedad limitada laboral.</p>
+      <p>Quiz en directo de 10 preguntas sobre el audio. Escribe tu nombre para entrar en la sala; la partida empieza cuando el profesor la inicie.</p>
       <div class="facts">
         <div class="chip"><span>Preguntas</span>10</div>
         <div class="chip"><span>Tiempo</span>${TIME} s</div>
         <div class="chip"><span>Máx.</span>1.000 pts + racha</div>
       </div>
+      ${closed ? `<p class="status-line">La partida ha terminado. Espera a que el profesor abra una nueva.</p>` : `
       <form class="namebox" id="nameForm" novalidate>
         <label for="nameInput" style="position:absolute;left:-9999px">Tu nombre</label>
-        <input id="nameInput" maxlength="24" autocomplete="off" placeholder="Escribe tu nombre" value="${esc(playerName)}">
-        <button class="btn" type="submit">Empezar</button>
-      </form>
-      <p class="err" id="nameErr" role="alert"></p>
-      <p class="hint">Responde tocando una ficha o con las teclas 1–4. Cuanto antes aciertes, más puntos.</p>
-      <div><button class="linkbtn" id="seeBoard" type="button">Ver la tabla de puntos</button></div>
+        <input id="nameInput" maxlength="24" autocomplete="off" placeholder="Escribe tu nombre" value="${esc(me.name || "")}">
+        <button class="btn" type="submit" id="joinBtn">Entrar</button>
+      </form>`}
+      <p class="err" id="nameErr" role="alert">${msg ? esc(msg) : ""}</p>
+      ${closed ? `<div id="boardSlot" style="text-align:left"></div>` : ""}
     </section>`;
-  const inp = $("#nameInput");
-  $("#nameForm").onsubmit = e => {
+  if (closed) { $("#boardSlot").innerHTML = boardHTML({ title: "Resultados" }); return; }
+  $("#nameForm").onsubmit = async e => {
     e.preventDefault();
+    const inp = $("#nameInput");
     const n = inp.value.trim().replace(/\s+/g, " ");
-    if (n.length < 2) { $("#nameErr").textContent = "Escribe tu nombre (al menos 2 letras) para entrar."; inp.focus(); return; }
-    playerName = n;
-    $("#who").textContent = n; $("#whochip").hidden = false;
-    reset();
-    sendProgress(false);
-    ask();
+    if (n.length < 2) { $("#nameErr").textContent = "Escribe tu nombre (al menos 2 letras)."; inp.focus(); return; }
+    const b = $("#joinBtn"); b.disabled = true; b.textContent = "Entrando…";
+    if (!S.ok) await poll();
+    try {
+      const r = await post({ action: "join", id: me.id, name: n, game: S.game });
+      if (!r.ok) {
+        b.disabled = false; b.textContent = "Entrar";
+        if (r.error === "partida") { S.game = Number(r.game); return $("#nameForm").requestSubmit(); }
+        $("#nameErr").textContent = { "nombre-usado": "Ese nombre ya está en la sala. Prueba con otro.", terminada: "La partida ha terminado.", "nombre-corto": "Nombre demasiado corto." }[r.error] || "No se pudo entrar. Inténtalo otra vez.";
+        return;
+      }
+      me.name = n; me.game = S.game; me.done = false; saveMe();
+      $("#who").textContent = n; $("#whochip").hidden = false;
+      await poll();
+      if (S.phase === "playing") startQuiz(); else showLobby();
+    } catch (err) {
+      b.disabled = false; b.textContent = "Entrar";
+      $("#nameErr").textContent = "Sin conexión. Inténtalo otra vez.";
+    }
   };
-  $("#seeBoard").onclick = showBoard;
 }
-function showBoard() {
-  $("#whochip").hidden = true;
-  screen.innerHTML = `<section class="end pop"><div id="boardSlot"></div>
-    <div class="actions"><button class="btn ghost" id="back">Volver al inicio</button></div></section>`;
-  mountBoard($("#boardSlot"));
-  $("#back").onclick = intro;
+function showLobby() {
+  view = "lobby";
+  screen.innerHTML = `
+    <section class="lobby pop">
+      <div class="pulse" aria-hidden="true"></div>
+      <h1>¡Ya estás dentro, ${esc(me.name)}!</h1>
+      <p class="status-line">Esperando a que el profesor inicie la partida…</p>
+      <div id="lobbyList"></div>
+    </section>`;
+  renderLobbyList();
+}
+function renderLobbyList() {
+  const el = $("#lobbyList"); if (!el) return;
+  const ps = S.players;
+  el.innerHTML = `<p class="hint">${ps.length} jugador${ps.length === 1 ? "" : "es"} en la sala</p>
+    <div class="names">${ps.map(p => `<span class="name-chip ${p.id === me.id ? "mine" : ""}">${esc(p.name)}</span>`).join("")}</div>`;
+}
+
+function startQuiz() {
+  state = { i: 0, score: 0, streak: 0, best: 0, log: [], timer: null, locked: false };
+  $("#score").textContent = 0; $("#streak").textContent = 0;
+  view = "quiz";
+  screen.innerHTML = `<section class="intro pop"><h1 class="go">¡Empieza!</h1></section>`;
+  setTimeout(ask, 1200);
 }
 function ask() {
   const Q = QUESTIONS[state.i];
   state.locked = false; state.t0 = performance.now();
   screen.innerHTML = `
-    <div class="qhead"><span>Pregunta ${state.i + 1} de ${QUESTIONS.length}</span><span>${esc(playerName)}</span></div>
+    <div class="qhead"><span>Pregunta ${state.i + 1} de ${QUESTIONS.length}</span><span>${esc(me.name)}</span></div>
     <div class="question pop">${Q.q}</div>
     <div class="mid">
       <div class="timer" id="timer" style="--p:1"><b id="tnum">${TIME}</b></div>
@@ -298,6 +354,12 @@ function tick() {
   t.style.setProperty("--p", left / TIME);
   $("#tnum").textContent = Math.ceil(left);
   if (left <= 0) answer(-1);
+}
+function sendProgress() {
+  const rec = { action: "progress", id: me.id, game: me.game, score: state.score, hits: state.log.filter(l => l.ok).length, q: state.log.length };
+  const p = S.players.find(r => r.id === me.id);
+  if (p) { p.score = rec.score; p.hits = rec.hits; p.q = rec.q; S.players = rank(S.players); }
+  return post(rec).then(r => { if (r && r.error === "partida") onState(); return r; }).catch(() => null);
 }
 function answer(k) {
   if (state.locked) return;
@@ -324,7 +386,7 @@ function answer(k) {
     if (idx === k && !ok) { b.classList.remove("dim"); b.style.opacity = .6; b.querySelector(".key")?.remove(); b.insertAdjacentHTML("beforeend", '<span class="mark" aria-label="tu respuesta">✗</span>'); }
   });
   const last = state.i === QUESTIONS.length - 1;
-  sendProgress(last).then(() => { const rk = myRank(), el = $("#rankLine"); if (rk && el) el.textContent = `Vas ${rk.pos}º de ${rk.total}`; });
+  sendProgress().then(() => poll()).then(() => { const rk = myRank(), el = $("#rankLine"); if (rk && el) el.textContent = `Vas ${rk.pos}º de ${rk.total}`; });
   const verdict = ok ? (state.streak >= 3 ? `¡Correcto! Racha de ${state.streak}` : "¡Correcto!") : (k === -1 ? "Se acabó el tiempo" : "Incorrecto");
   $("#fb").innerHTML = `
     <div class="feedback ${ok ? "ok" : "bad"} pop" role="status">
@@ -332,28 +394,29 @@ function answer(k) {
       <div class="fbtxt"><div class="verdict">${verdict}</div><p>${Q.why}</p></div>
       <div class="gain">+${gain}</div>
     </div>
-    <div class="next-row" style="margin-top:12px;justify-content:space-between;align-items:center"><span class="rankline" id="rankLine">${API ? "Calculando tu puesto…" : ""}</span><button class="btn" id="next">${last ? "Ver resultados" : "Siguiente"}</button></div>`;
+    <div class="next-row" style="margin-top:12px;justify-content:space-between;align-items:center"><span class="rankline" id="rankLine">Calculando tu puesto…</span><button class="btn" id="next">${last ? "Ver resultados" : "Siguiente"}</button></div>`;
   const n = $("#next");
   n.onclick = () => { state.i++; last ? finish() : ask(); };
   n.focus();
 }
-async function finish() {
+function finish() {
+  me.done = true; saveMe();
+  view = "done";
   const hits = state.log.filter(l => l.ok).length;
   const msg = hits === 10 ? "Pleno. Listos para ir al notario."
     : hits >= 8 ? "Muy bien. Dominas la sociedad limitada."
     : hits >= 5 ? "Bien. Repasa los detalles que fallaste."
-    : "Vuelve a escuchar el audio y repite.";
+    : "Vuelve a escuchar el audio.";
   screen.innerHTML = `
     <section class="end pop">
       <div class="podium">
-        <div class="whoami">${esc(playerName)}</div>
+        <div class="whoami">${esc(me.name)}</div>
         <div class="big">${fmt(state.score)}</div>
         <h2>${hits} de ${QUESTIONS.length} aciertos</h2>
         <p>${msg} Mejor racha: ${state.best}.</p>
-        <p class="hint" id="saveMsg">Guardando tu puntuación en la tabla…</p>
+        <p class="rankline" id="finalRank"></p>
       </div>
       <div id="boardSlot"></div>
-      <div class="actions"><button class="btn" id="again">Jugar otra vez</button></div>
       <div class="review">
         <h3>Repaso</h3>
         ${QUESTIONS.map((Q, i) => {
@@ -362,23 +425,161 @@ async function finish() {
         }).join("")}
       </div>
     </section>`;
-  $("#again").onclick = intro;
-  mountBoard($("#boardSlot"));
-  const res = await sendProgress(true);
-  const rk = myRank();
-  const m = $("#saveMsg"); if (!m) return;
-  m.textContent = { saved: rk ? `Has quedado ${rk.pos}º de ${rk.total}. La tabla se sigue actualizando mientras juegan los demás.` : "Puntuación guardada en la tabla de todos.", off: "La tabla compartida todavía no está configurada.", error: "No se pudo guardar. Revisa la conexión." }[res];
+  renderDone();
 }
+function renderDone() {
+  const rk = myRank();
+  const el = $("#finalRank");
+  if (el) el.textContent = rk ? (S.phase === "finished" ? `Puesto final: ${rk.pos}º de ${rk.total}` : `Vas ${rk.pos}º de ${rk.total} · la tabla sigue cambiando mientras juegan los demás`) : "";
+  const b = $("#boardSlot");
+  if (b) b.innerHTML = (S.phase === "finished" ? `<h2 class="center">🏆 Partida terminada</h2>` + podiumHTML() : "") + boardHTML();
+}
+
+function onState() {
+  if (MODE === "host") return renderHost();
+  if (MODE === "tv") return renderTV();
+  if (!S.ok) return;
+  // el profesor ha borrado la tabla: nueva partida
+  if (me.game && me.game !== S.game) {
+    me.game = 0; me.done = false; saveMe();
+    if (state) clearInterval(state.timer);
+    state = null;
+    return showJoin("El profesor ha abierto una partida nueva. Vuelve a entrar con tu nombre.");
+  }
+  const joined = me.game === S.game && S.players.some(p => p.id === me.id);
+  if (view === "join" && S.phase === "finished" && !$("#boardSlot")) return showJoin();
+  if (view === "join" && S.phase !== "finished" && $("#boardSlot")) return showJoin();
+  if (view === "lobby") {
+    if (S.phase === "playing") return startQuiz();
+    if (S.phase === "finished") return showJoin();
+    return renderLobbyList();
+  }
+  if (view === "done") return renderDone();
+  if (view === "boot") {
+    if (joined && me.done) { view = "done-lite"; return showResultsOnly(); }
+    if (joined && S.phase === "lobby") { $("#who").textContent = me.name; $("#whochip").hidden = false; return showLobby(); }
+    if (joined && S.phase === "playing") { $("#who").textContent = me.name; $("#whochip").hidden = false; return startQuiz(); }
+    return showJoin();
+  }
+  if (view === "done-lite") return showResultsOnly();
+}
+function showResultsOnly() {
+  screen.innerHTML = `<section class="end pop"><div class="podium"><div class="whoami">${esc(me.name)}</div><h2>Ya has terminado tu partida</h2><p class="rankline" id="finalRank"></p></div><div id="boardSlot"></div></section>`;
+  renderDone();
+}
+
+/* ---------------- Proyector (solo lectura) ---------------- */
+function renderTV() {
+  document.body.classList.add("tv");
+  screen.innerHTML = `<section class="end"><div class="podium"><h2>${S.phase === "lobby" ? "Sala de espera" : S.phase === "finished" ? "🏆 Resultados" : "Clasificación en directo"}</h2></div>${S.phase === "finished" ? podiumHTML() : ""}${boardHTML()}</section>`;
+}
+
+/* ---------------- Profesor ---------------- */
+let hostKey = store.get("quiz-sl-key", "");
+let hostOk = false, hostBusy = false, armed = "";
+async function hostLogin(msg) {
+  document.body.classList.add("tv");
+  $("#whochip").hidden = true;
+  screen.innerHTML = `
+    <section class="intro pop">
+      <h1>Panel del <em>profesor</em></h1>
+      <p>Escribe la clave del profesor para controlar la partida.</p>
+      <form class="namebox" id="keyForm" novalidate>
+        <input id="keyInput" type="password" autocomplete="current-password" placeholder="Clave del profesor" value="">
+        <button class="btn" type="submit">Entrar</button>
+      </form>
+      <p class="err" id="keyErr" role="alert">${msg || ""}</p>
+    </section>`;
+  $("#keyForm").onsubmit = async e => {
+    e.preventDefault();
+    const k = $("#keyInput").value.trim();
+    if (!k) return;
+    $("#keyErr").textContent = "Comprobando…";
+    const ok = await checkKey(k);
+    if (!ok) { $("#keyErr").textContent = "Clave incorrecta."; return; }
+    hostKey = k; store.set("quiz-sl-key", k); hostOk = true; renderHost();
+  };
+}
+async function checkKey(k) {
+  try { const r = await post({ action: "check", key: k }); return !!r.ok; } catch (e) { return false; }
+}
+async function hostAction(act) {
+  if (hostBusy) return;
+  hostBusy = true; renderHost();
+  try {
+    const r = await post({ action: act, key: hostKey });
+    if (!r.ok && r.error === "clave") { hostOk = false; store.set("quiz-sl-key", ""); hostBusy = false; return hostLogin("La clave ya no es válida."); }
+    if (r.ok) { S.phase = r.phase; S.game = r.game; if (act === "reset") S.players = []; }
+  } catch (e) { alert("No se pudo conectar. Inténtalo otra vez."); }
+  hostBusy = false; armed = "";
+  await poll();
+}
+function renderHost() {
+  if (!hostOk) return;
+  const ph = S.phase;
+  const n = S.players.length;
+  const done = S.players.filter(p => p.q >= 10).length;
+  const btn = (id, label, cls = "") => `<button class="btn ${cls}" id="${id}" ${hostBusy ? "disabled" : ""}>${hostBusy ? "Un momento…" : label}</button>`;
+  let main = "";
+  if (!S.ok) main = `<div class="empty">Conectando…</div>`;
+  else if (ph === "lobby") {
+    main = `
+      <div class="host-lobby">
+        <div class="join-card">
+          <img src="qr.png" alt="Código QR para unirse" width="240" height="240">
+          <div class="join-url">${esc(SITE.replace(/^https?:\/\//, ""))}</div>
+        </div>
+        <div class="lobby-side">
+          <div class="count"><b>${n}</b> jugador${n === 1 ? "" : "es"} en la sala</div>
+          <div class="names big">${S.players.map(p => `<span class="name-chip">${esc(p.name)}</span>`).join("") || `<span class="hint">Esperando a que entren los jugadores…</span>`}</div>
+        </div>
+      </div>
+      <div class="actions">${btn("startBtn", "▶ Iniciar partida")}</div>`;
+  } else if (ph === "playing") {
+    main = `
+      <p class="status-line center">Partida en curso · ${done} de ${n} han terminado</p>
+      ${boardHTML()}
+      <div class="actions">${btn("finishBtn", armed === "finish" ? "Pulsa otra vez para finalizar" : "■ Finalizar partida", "ghost")}</div>`;
+  } else {
+    main = `
+      <h2 class="center">🏆 Partida terminada</h2>
+      ${podiumHTML()}
+      ${boardHTML({ title: "Resultados" })}
+      <div class="actions">${btn("resetBtn", armed === "reset" ? "Pulsa otra vez: se borrarán todos los resultados" : "Borrar tabla y nueva partida", "danger")}</div>`;
+  }
+  screen.innerHTML = `
+    <section class="end">
+      <div class="host-head"><h1>${ph === "lobby" ? "Sala de espera" : ph === "playing" ? "En directo" : "Resultados"}</h1>
+      <span class="hint">Panel del profesor · Partida ${S.game || ""}</span></div>
+      ${main}
+      ${ph !== "finished" && S.ok ? `<div style="text-align:center"><button class="linkbtn" id="resetLink">${armed === "reset" ? "Pulsa otra vez para borrar la tabla y vaciar la sala" : "Borrar tabla y empezar de cero"}</button></div>` : ""}
+    </section>`;
+  const on = (id, f) => { const b = $("#" + id); if (b) b.onclick = f; };
+  on("startBtn", () => hostAction("start"));
+  on("finishBtn", () => { if (armed !== "finish") { armed = "finish"; renderHost(); } else hostAction("finish"); });
+  const reset = () => { if (armed !== "reset") { armed = "reset"; renderHost(); } else hostAction("reset"); };
+  on("resetBtn", reset); on("resetLink", reset);
+}
+
 document.addEventListener("keydown", e => {
-  if (!state || state.locked || !$("#answers") || e.target.tagName === "INPUT") return;
-  const k = ["1","2","3","4"].indexOf(e.key);
+  if (view !== "quiz" || !state || state.locked || !$("#answers") || e.target.tagName === "INPUT") return;
+  const k = ["1", "2", "3", "4"].indexOf(e.key);
   if (k >= 0) answer(k);
 });
-if (/[?&]tabla\b/.test(location.search)) {
-  document.body.classList.add("tv");
-  screen.innerHTML = `<section class="end pop"><div class="podium"><h2>Clasificación en directo</h2><p>Escanea el QR del vídeo y escribe tu nombre para entrar en la partida.</p></div><div id="boardSlot"></div></section>`;
-  mountBoard($("#boardSlot"));
-} else intro();
+
+/* ---------------- Arranque ---------------- */
+(async function boot() {
+  if (MODE === "host") {
+    if (hostKey && await checkKey(hostKey)) hostOk = true;
+    if (!hostOk) hostLogin();
+  } else if (MODE === "player") {
+    view = "boot";
+    screen.innerHTML = `<section class="intro"><p class="status-line">Conectando con la partida…</p></section>`;
+  }
+  await poll();
+  if (MODE === "player" && view === "boot" && !S.ok) showJoin("No se pudo conectar. Revisa la conexión y recarga la página.");
+  schedule();
+})();
 </script>
 </body>
 </html>
