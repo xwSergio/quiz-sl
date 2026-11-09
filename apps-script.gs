@@ -8,8 +8,29 @@
 const SHEET = 'Puntuaciones';
 const HEAD = ['ID', 'Nombre', 'Puntos', 'Aciertos', 'Pregunta', 'Actualizado'];
 
+function book_() {
+  // Funciona pegado en una hoja (Extensiones > Apps Script) o como proyecto
+  // suelto en script.google.com: en ese caso crea la hoja "Quiz SL - Puntuaciones"
+  // en tu Google Drive la primera vez.
+  const active = SpreadsheetApp.getActiveSpreadsheet();
+  if (active) return active;
+  const props = PropertiesService.getScriptProperties();
+  const id = props.getProperty('SHEET_ID');
+  if (id) return SpreadsheetApp.openById(id);
+  const ss = SpreadsheetApp.create('Quiz SL - Puntuaciones');
+  props.setProperty('SHEET_ID', ss.getId());
+  return ss;
+}
+
+// Ejecuta esta función una vez (botón Ejecutar) para crear la hoja y dar permisos.
+function preparar() {
+  const ss = book_();
+  sheet_();
+  Logger.log('Hoja lista: ' + ss.getUrl());
+}
+
 function sheet_() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ss = book_();
   let s = ss.getSheetByName(SHEET);
   if (!s) s = ss.insertSheet(SHEET);
   if (s.getLastRow() === 0) s.appendRow(HEAD);
