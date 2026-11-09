@@ -149,47 +149,69 @@ const screen = $("#screen");
 let state;
 let playerName = "";
 
-/* ---------- Clasificación (guardada en este dispositivo) ---------- */
-const KEY = "quiz-sl-scores-v1";
-function loadRows() {
-  try { const r = JSON.parse(localStorage.getItem(KEY) || "[]"); return Array.isArray(r) ? r : []; } catch (e) { return []; }
+/* ---------- Clasificación compartida (Google Sheets) ---------- */
+// Pega aquí la URL de la aplicación web de Apps Script (termina en /exec)
+const API = "";
+const live = { rows: [], status: API ? "loading" : "off" };
+const boardViews = new Set();
+
+function bestByName(list) {
+  const m = new Map();
+  for (const r of list) {
+    const name = String(r.name || "").trim();
+    if (!name) continue;
+    const id = name.toLowerCase();
+    const score = Number(r.score) || 0, hits = Number(r.hits) || 0;
+    const p = m.get(id);
+    if (!p) m.set(id, { id, name, score, hits, plays: 1 });
+    else { p.plays++; if (score > p.score) { p.score = score; p.hits = hits; p.name = name; } }
+  }
+  return [...m.values()].sort((x, y) => y.score - x.score);
 }
-function saveRows(rows) {
-  try { localStorage.setItem(KEY, JSON.stringify(rows)); return true; } catch (e) { return false; }
+async function refresh() {
+  if (!API) { renderBoards(); return; }
+  try {
+    const r = await fetch(API + (API.includes("?") ? "&" : "?") + "t=" + Date.now());
+    const data = await r.json();
+    live.rows = bestByName(Array.isArray(data) ? data : (data.rows || []));
+    live.status = "ok";
+  } catch (e) { if (live.status !== "ok") live.status = "error"; }
+  renderBoards();
 }
-function saveScore(rec) {
-  const rows = loadRows();
-  const id = rec.name.toLowerCase();
-  const prev = rows.find(r => r.id === id);
-  let res;
-  if (prev && prev.score >= rec.score) { prev.plays = (prev.plays || 1) + 1; res = "kept"; }
-  else if (prev) { Object.assign(prev, rec, { plays: (prev.plays || 1) + 1 }); res = "saved"; }
-  else { rows.push({ id, ...rec, plays: 1 }); res = "saved"; }
-  rows.sort((a, b) => b.score - a.score);
-  return saveRows(rows) ? res : "off";
+refresh();
+setInterval(() => { if (boardViews.size && !document.hidden) refresh(); }, 10000);
+
+async function saveScore(rec) {
+  if (!API) return "off";
+  try {
+    // text/plain evita la comprobación CORS previa de Google
+    await fetch(API, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(rec) });
+    await refresh();
+    return "saved";
+  } catch (e) {
+    try { await fetch(API, { method: "POST", mode: "no-cors", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(rec) }); setTimeout(refresh, 1500); return "saved"; }
+    catch (e2) { return "error"; }
+  }
 }
 function boardHTML() {
-  const rows = loadRows().sort((a, b) => b.score - a.score);
   const me = playerName.toLowerCase();
-  const body = !rows.length
-    ? `<div class="empty">Todavía no hay puntuaciones en este dispositivo.</div>`
-    : `<div class="board-wrap"><table class="rank">
+  let body;
+  if (live.status === "off") body = `<div class="empty">La tabla compartida todavía no está configurada.</div>`;
+  else if (live.status === "loading") body = `<div class="empty">Cargando clasificación…</div>`;
+  else if (live.status === "error") body = `<div class="empty">No se pudo cargar la tabla. Revisa la conexión y recarga.</div>`;
+  else if (!live.rows.length) body = `<div class="empty">Todavía no hay puntuaciones. Aparecerán aquí en cuanto alguien termine el quiz.</div>`;
+  else body = `<div class="board-wrap"><table class="rank">
       <thead><tr><th>#</th><th>Nombre</th><th class="num">Aciertos</th><th class="num">Puntos</th></tr></thead>
-      <tbody>${rows.map((r, i) => `<tr class="${i < 3 ? "p" + (i + 1) : ""} ${me && r.id === me ? "me" : ""}">
-        <td class="pos">${i + 1}</td><td>${esc(r.name || "Sin nombre")}</td>
-        <td class="num">${Number(r.hits) || 0}/10</td><td class="num pts">${fmt(r.score)}</td></tr>`).join("")}</tbody></table></div>`;
-  return `<div class="board"><div class="board-head"><h3>Tabla de puntos</h3><span class="hint">Partidas jugadas en este dispositivo</span></div>${body}</div>
-    ${rows.length ? `<div style="text-align:center"><button class="linkbtn" id="resetBtn">Borrar la tabla</button></div>` : ""}`;
+      <tbody>${live.rows.map((r, i) => `<tr class="${i < 3 ? "p" + (i + 1) : ""} ${me && r.id === me ? "me" : ""}">
+        <td class="pos">${i + 1}</td><td>${esc(r.name)}${me && r.id === me ? " (tú)" : ""}</td>
+        <td class="num">${r.hits}/10</td><td class="num pts">${fmt(r.score)}</td></tr>`).join("")}</tbody></table></div>`;
+  const note = live.status === "ok" ? `${live.rows.length} jugador${live.rows.length === 1 ? "" : "es"} · se actualiza sola` : "";
+  return `<div class="board"><div class="board-head"><h3>Tabla de puntos</h3><span class="hint">${note}</span></div>${body}</div>`;
 }
-function mountBoard(el) {
-  el.innerHTML = boardHTML();
-  const b = $("#resetBtn", el); if (!b) return;
-  let armed = false;
-  b.onclick = () => {
-    if (!armed) { armed = true; b.textContent = "Pulsa otra vez para borrar todas las puntuaciones"; return; }
-    saveRows([]); mountBoard(el);
-  };
+function renderBoards() {
+  boardViews.forEach(el => { if (!el.isConnected) { boardViews.delete(el); return; } el.innerHTML = boardHTML(); });
 }
+function mountBoard(el) { boardViews.add(el); el.innerHTML = boardHTML(); refresh(); }
 
 /* ---------- Juego ---------- */
 function reset() {
@@ -297,13 +319,12 @@ function answer(k) {
   n.onclick = () => { state.i++; last ? finish() : ask(); };
   n.focus();
 }
-function finish() {
+async function finish() {
   const hits = state.log.filter(l => l.ok).length;
   const msg = hits === 10 ? "Pleno. Listos para ir al notario."
     : hits >= 8 ? "Muy bien. Dominas la sociedad limitada."
     : hits >= 5 ? "Bien. Repasa los detalles que fallaste."
     : "Vuelve a escuchar el audio y repite.";
-  const res = saveScore({ name: playerName, score: state.score, hits, at: new Date().toISOString() });
   screen.innerHTML = `
     <section class="end pop">
       <div class="podium">
@@ -311,7 +332,7 @@ function finish() {
         <div class="big">${fmt(state.score)}</div>
         <h2>${hits} de ${QUESTIONS.length} aciertos</h2>
         <p>${msg} Mejor racha: ${state.best}.</p>
-        <p class="hint">${{ saved: "Puntuación guardada en la tabla.", kept: "Tu mejor puntuación anterior era más alta; se mantiene en la tabla.", off: "No se pudo guardar la puntuación en este navegador." }[res]}</p>
+        <p class="hint" id="saveMsg">Guardando tu puntuación en la tabla…</p>
       </div>
       <div id="boardSlot"></div>
       <div class="actions"><button class="btn" id="again">Jugar otra vez</button></div>
@@ -325,6 +346,9 @@ function finish() {
     </section>`;
   $("#again").onclick = intro;
   mountBoard($("#boardSlot"));
+  const res = await saveScore({ name: playerName, score: state.score, hits });
+  const m = $("#saveMsg"); if (!m) return;
+  m.textContent = { saved: "Puntuación guardada en la tabla de todos.", off: "La tabla compartida todavía no está configurada.", error: "No se pudo guardar. Revisa la conexión." }[res];
 }
 document.addEventListener("keydown", e => {
   if (!state || state.locked || !$("#answers") || e.target.tagName === "INPUT") return;
