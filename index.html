@@ -99,6 +99,12 @@ table.rank tr.me td { background: rgba(255,182,39,.12); }
 table.rank td.pts { font: 800 18px var(--display); }
 .empty { padding: 24px 16px; color: var(--muted); text-align: center; }
 .linkbtn { background: none; border: 0; color: var(--muted); font: 600 13px var(--body); text-decoration: underline; cursor: pointer; padding: 4px; }
+.rankline { font: 800 18px var(--display); color: var(--sun); }
+td.prog { color: var(--muted); font-size: 14px; white-space: nowrap; }
+body.tv .app { max-width: 1200px; }
+body.tv .stats { display: none; }
+body.tv table.rank td { font-size: 22px; padding: 14px 18px; }
+body.tv .board-head h3 { font-size: 30px; }
 .whoami { color: var(--muted); font-size: 14px; font-weight: 600; }
 @media (max-width: 560px) {
   .answers { grid-template-columns: 1fr; gap: 10px; } .ans { min-height: 64px; } .ans .key { display: none; }
@@ -155,18 +161,22 @@ const API = "";
 const live = { rows: [], status: API ? "loading" : "off" };
 const boardViews = new Set();
 
+let myId = "";
+try { myId = localStorage.getItem("quiz-sl-id") || ""; } catch (e) {}
+if (!myId) { myId = Math.random().toString(36).slice(2, 10) + Date.now().toString(36); try { localStorage.setItem("quiz-sl-id", myId); } catch (e) {} }
+
 function bestByName(list) {
-  const m = new Map();
-  for (const r of list) {
-    const name = String(r.name || "").trim();
-    if (!name) continue;
-    const id = name.toLowerCase();
-    const score = Number(r.score) || 0, hits = Number(r.hits) || 0;
-    const p = m.get(id);
-    if (!p) m.set(id, { id, name, score, hits, plays: 1 });
-    else { p.plays++; if (score > p.score) { p.score = score; p.hits = hits; p.name = name; } }
-  }
-  return [...m.values()].sort((x, y) => y.score - x.score);
+  return list.filter(r => String(r.name || "").trim())
+    .map(r => ({ id: String(r.id || r.name), name: String(r.name).trim(), score: Number(r.score) || 0, hits: Number(r.hits) || 0, q: Number(r.q) || 0 }))
+    .sort((x, y) => y.score - x.score || y.hits - x.hits || x.name.localeCompare(y.name));
+}
+function myRank() {
+  const i = live.rows.findIndex(r => r.id === myId);
+  return i < 0 ? null : { pos: i + 1, total: live.rows.length };
+}
+function sendProgress(final) {
+  if (!state) return Promise.resolve("off");
+  return saveScore({ id: myId, name: playerName, score: state.score, hits: state.log.filter(l => l.ok).length, q: state.log.length, final: !!final });
 }
 async function refresh() {
   if (!API) { renderBoards(); return; }
@@ -179,10 +189,14 @@ async function refresh() {
   renderBoards();
 }
 refresh();
-setInterval(() => { if (boardViews.size && !document.hidden) refresh(); }, 10000);
+setInterval(() => { if (boardViews.size && !document.hidden) refresh(); }, 5000);
 
 async function saveScore(rec) {
   if (!API) return "off";
+  const i = live.rows.findIndex(r => r.id === rec.id);
+  if (i >= 0) { const prev = live.rows[i]; if (!(prev.q >= 10 && prev.score > rec.score)) Object.assign(prev, { name: rec.name, score: rec.score, hits: rec.hits, q: rec.q }); }
+  else live.rows.push({ id: rec.id, name: rec.name, score: rec.score, hits: rec.hits, q: rec.q });
+  live.rows = bestByName(live.rows); renderBoards();
   try {
     // text/plain evita la comprobación CORS previa de Google
     await fetch(API, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(rec) });
@@ -194,18 +208,19 @@ async function saveScore(rec) {
   }
 }
 function boardHTML() {
-  const me = playerName.toLowerCase();
   let body;
   if (live.status === "off") body = `<div class="empty">La tabla compartida todavía no está configurada.</div>`;
   else if (live.status === "loading") body = `<div class="empty">Cargando clasificación…</div>`;
   else if (live.status === "error") body = `<div class="empty">No se pudo cargar la tabla. Revisa la conexión y recarga.</div>`;
   else if (!live.rows.length) body = `<div class="empty">Todavía no hay puntuaciones. Aparecerán aquí en cuanto alguien termine el quiz.</div>`;
   else body = `<div class="board-wrap"><table class="rank">
-      <thead><tr><th>#</th><th>Nombre</th><th class="num">Aciertos</th><th class="num">Puntos</th></tr></thead>
-      <tbody>${live.rows.map((r, i) => `<tr class="${i < 3 ? "p" + (i + 1) : ""} ${me && r.id === me ? "me" : ""}">
-        <td class="pos">${i + 1}</td><td>${esc(r.name)}${me && r.id === me ? " (tú)" : ""}</td>
-        <td class="num">${r.hits}/10</td><td class="num pts">${fmt(r.score)}</td></tr>`).join("")}</tbody></table></div>`;
-  const note = live.status === "ok" ? `${live.rows.length} jugador${live.rows.length === 1 ? "" : "es"} · se actualiza sola` : "";
+      <thead><tr><th>#</th><th>Nombre</th><th class="num">Progreso</th><th class="num">Aciertos</th><th class="num">Puntos</th></tr></thead>
+      <tbody>${live.rows.map((r, i) => `<tr class="${i < 3 ? "p" + (i + 1) : ""} ${r.id === myId && playerName ? "me" : ""}">
+        <td class="pos">${i + 1}</td><td>${esc(r.name)}${r.id === myId && playerName ? " (tú)" : ""}</td>
+        <td class="num prog">${r.q >= 10 ? "Terminado" : r.q + "/10"}</td>
+        <td class="num">${r.hits}</td><td class="num pts">${fmt(r.score)}</td></tr>`).join("")}</tbody></table></div>`;
+  const playing = live.rows.filter(r => r.q < 10).length;
+  const note = live.status === "ok" ? `${live.rows.length} jugador${live.rows.length === 1 ? "" : "es"}${playing ? " · " + playing + " jugando ahora" : ""} · en directo` : "";
   return `<div class="board"><div class="board-head"><h3>Tabla de puntos</h3><span class="hint">${note}</span></div>${body}</div>`;
 }
 function renderBoards() {
@@ -246,6 +261,8 @@ function intro() {
     if (n.length < 2) { $("#nameErr").textContent = "Escribe tu nombre (al menos 2 letras) para entrar."; inp.focus(); return; }
     playerName = n;
     $("#who").textContent = n; $("#whochip").hidden = false;
+    reset();
+    sendProgress(false);
     ask();
   };
   $("#seeBoard").onclick = showBoard;
@@ -307,6 +324,7 @@ function answer(k) {
     if (idx === k && !ok) { b.classList.remove("dim"); b.style.opacity = .6; b.querySelector(".key")?.remove(); b.insertAdjacentHTML("beforeend", '<span class="mark" aria-label="tu respuesta">✗</span>'); }
   });
   const last = state.i === QUESTIONS.length - 1;
+  sendProgress(last).then(() => { const rk = myRank(), el = $("#rankLine"); if (rk && el) el.textContent = `Vas ${rk.pos}º de ${rk.total}`; });
   const verdict = ok ? (state.streak >= 3 ? `¡Correcto! Racha de ${state.streak}` : "¡Correcto!") : (k === -1 ? "Se acabó el tiempo" : "Incorrecto");
   $("#fb").innerHTML = `
     <div class="feedback ${ok ? "ok" : "bad"} pop" role="status">
@@ -314,7 +332,7 @@ function answer(k) {
       <div class="fbtxt"><div class="verdict">${verdict}</div><p>${Q.why}</p></div>
       <div class="gain">+${gain}</div>
     </div>
-    <div class="next-row" style="margin-top:12px"><button class="btn" id="next">${last ? "Ver resultados" : "Siguiente"}</button></div>`;
+    <div class="next-row" style="margin-top:12px;justify-content:space-between;align-items:center"><span class="rankline" id="rankLine">${API ? "Calculando tu puesto…" : ""}</span><button class="btn" id="next">${last ? "Ver resultados" : "Siguiente"}</button></div>`;
   const n = $("#next");
   n.onclick = () => { state.i++; last ? finish() : ask(); };
   n.focus();
@@ -346,16 +364,21 @@ async function finish() {
     </section>`;
   $("#again").onclick = intro;
   mountBoard($("#boardSlot"));
-  const res = await saveScore({ name: playerName, score: state.score, hits });
+  const res = await sendProgress(true);
+  const rk = myRank();
   const m = $("#saveMsg"); if (!m) return;
-  m.textContent = { saved: "Puntuación guardada en la tabla de todos.", off: "La tabla compartida todavía no está configurada.", error: "No se pudo guardar. Revisa la conexión." }[res];
+  m.textContent = { saved: rk ? `Has quedado ${rk.pos}º de ${rk.total}. La tabla se sigue actualizando mientras juegan los demás.` : "Puntuación guardada en la tabla de todos.", off: "La tabla compartida todavía no está configurada.", error: "No se pudo guardar. Revisa la conexión." }[res];
 }
 document.addEventListener("keydown", e => {
   if (!state || state.locked || !$("#answers") || e.target.tagName === "INPUT") return;
   const k = ["1","2","3","4"].indexOf(e.key);
   if (k >= 0) answer(k);
 });
-intro();
+if (/[?&]tabla\b/.test(location.search)) {
+  document.body.classList.add("tv");
+  screen.innerHTML = `<section class="end pop"><div class="podium"><h2>Clasificación en directo</h2><p>Escanea el QR del vídeo y escribe tu nombre para entrar en la partida.</p></div><div id="boardSlot"></div></section>`;
+  mountBoard($("#boardSlot"));
+} else intro();
 </script>
 </body>
 </html>
