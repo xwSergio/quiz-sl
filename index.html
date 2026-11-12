@@ -226,7 +226,7 @@ async function poll() {
 }
 function schedule() {
   const fast = MODE === "host" || view === "lobby" || view === "join" || view === "done" || MODE === "tv";
-  setTimeout(async () => { if (!document.hidden) await poll(); schedule(); }, fast ? 2000 : 5000);
+  setTimeout(async () => { if (!document.hidden) await poll(); schedule(); }, MODE === "host" || MODE === "tv" ? 2000 : fast ? 3000 : 6000);
 }
 
 /* ---------------- Tabla ---------------- */
@@ -301,6 +301,8 @@ function showJoin(msg) {
       if (S.phase === "playing") startQuiz(); else showLobby();
     } catch (err) {
       b.disabled = false; b.textContent = "Entrar";
+      if (!b.dataset.retried) { b.dataset.retried = "1"; $("#nameErr").textContent = "Mucha gente entrando… reintentando."; setTimeout(() => $("#nameForm")?.requestSubmit(), 1500 + Math.random() * 2000); return; }
+      delete b.dataset.retried;
       $("#nameErr").textContent = "Sin conexión. Inténtalo otra vez.";
     }
   };
@@ -359,7 +361,13 @@ function sendProgress() {
   const rec = { action: "progress", id: me.id, game: me.game, score: state.score, hits: state.log.filter(l => l.ok).length, q: state.log.length };
   const p = S.players.find(r => r.id === me.id);
   if (p) { p.score = rec.score; p.hits = rec.hits; p.q = rec.q; S.players = rank(S.players); }
-  return post(rec).then(r => { if (r && r.error === "partida") onState(); return r; }).catch(() => null);
+  const attempt = n => post(rec).catch(() => null).then(r => {
+    if (r && r.error === "partida") { onState(); return r; }
+    if (!r && n < 4) return new Promise(res => setTimeout(res, 1500 + Math.random() * 2500 * n))
+      .then(() => (state && state.log.length > rec.q) ? null : attempt(n + 1)); // ya hay un envío más reciente
+    return r;
+  });
+  return attempt(1);
 }
 function answer(k) {
   if (state.locked) return;
